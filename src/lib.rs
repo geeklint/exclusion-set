@@ -232,10 +232,18 @@ impl TypeIdSet {
     }
 }
 
+impl Drop for TypeIdSet {
+    fn drop(&mut self) {
+        let mut node = self.head.with_mut(|p| *p);
+        while !node.is_null() {
+            let boxed = unsafe { Box::from_raw(node) };
+            node = boxed.next.cast_mut();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use core::any::TypeId;
-
     use super::*;
 
     use loom::model;
