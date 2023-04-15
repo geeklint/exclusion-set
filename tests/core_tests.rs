@@ -97,21 +97,3 @@ fn removing_something_absent_is_false() {
         }
     });
 }
-
-#[test]
-fn removing_while_touching() {
-    model(|| {
-        struct Marker;
-
-        let set: Arc<TypeIdSet> = Arc::default();
-        let set2 = Arc::clone(&set);
-        assert!(set.try_insert(TypeId::of::<Marker>()));
-        let bg = thread::spawn(move || {
-            while set2.touch(TypeId::of::<Marker>()) {
-                thread::yield_now();
-            }
-        });
-        unsafe { assert!(set.remove(TypeId::of::<Marker>())) };
-        bg.join().unwrap();
-    });
-}

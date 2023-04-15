@@ -210,16 +210,6 @@ impl TypeIdSet {
         drop(waiting_node);
     }
 
-    pub fn touch(&self, value: TypeId) -> bool {
-        if let Ok(node) = self.find(value) {
-            node.status
-                .compare_exchange_weak(occupied(), occupied(), Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-        } else {
-            true
-        }
-    }
-
     /// Mark a `TypeId` as absent from the set, or notify a waiting thread that
     /// it may proceed.
     ///
