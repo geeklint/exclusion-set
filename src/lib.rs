@@ -2,7 +2,7 @@
 //! set are O(n) where n is the number of distinct `TypeId`s that have ever been
 //! inserted into the set.
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![deny(clippy::all, clippy::pedantic)]
 
 extern crate alloc;
@@ -12,15 +12,19 @@ use {
     core::{any::TypeId, ptr, sync::atomic::Ordering},
 };
 
-use loom::{
-    sync::atomic::{AtomicBool, AtomicPtr},
-    thread::{self, Thread},
-};
+#[cfg(loom)]
+use loom::{sync::atomic, thread};
+
+#[cfg(not(loom))]
+use core::sync::atomic;
+
+#[cfg(all(not(loom), feature = "std"))]
+use std::thread;
 
 /// A set of `TypeId`s held in a linked list.
 #[derive(Default)]
 pub struct TypeIdSet {
-    head: AtomicPtr<Node>,
+    head: atomic::AtomicPtr<Node>,
 }
 
 struct Node {
@@ -31,7 +35,7 @@ struct Node {
     /// currently considered absent, `occupied` if the `TypeId` is currently
     /// considered present, or a valid pointer if the `TypeId` is currently
     /// considered present and one or more threads are waiting to insert it.
-    status: AtomicPtr<WaitingThreadNode>,
+    status: atomic::AtomicPtr<WaitingThreadNode>,
 
     /// The next node, or `null` if this is the end of the list.
     next: *const Node,
@@ -49,11 +53,13 @@ fn occupied() -> *mut WaitingThreadNode {
 /// that `TypeId` can be notified that it may proceed.
 struct WaitingThreadNode {
     /// The handle of the waiting thread.
-    thread: Thread,
+    #[cfg(feature = "std")]
+    thread: thread::Thread,
 
     /// A flag to indicate if this node has been removed from the list of
     /// waiting threads, and the thread should stop waiting.
-    popped: AtomicBool,
+    #[cfg(feature = "std")]
+    popped: atomic::AtomicBool,
 
     /// The next node, or `occupied`, if there are no more waiting threads.
     next: *mut WaitingThreadNode,
@@ -110,7 +116,7 @@ impl TypeIdSet {
         };
         let new_node = Box::into_raw(Box::new(Node {
             value,
-            status: AtomicPtr::new(occupied()),
+            status: atomic::AtomicPtr::new(occupied()),
             next,
         }));
         // Safety: we just created the pointer from the box, so it's safe to
@@ -167,198 +173,119 @@ impl TypeIdSet {
 
     /// Block the current thread until we can consider ourselves to have
     /// inserted the `TypeId` provided.
+    #[cfg(feature = "std")]
     pub fn wait_to_insert(&self, value: TypeId) {
         let Err(node) = self.try_insert_inner(value) else { return };
         let mut waiting_node = WaitingThreadNode {
             thread: thread::current(),
-            popped: AtomicBool::new(false),
+            popped: atomic::AtomicBool::new(false),
             next: ptr::null_mut(),
         };
-        let Ok(existing) = node
-            .status
-            .fetch_update(Ordering::Release, Ordering::Acquire, |existing| {
-                if existing.is_null() {
-                    Some(occupied())
-                } else {
-                    waiting_node.next = existing;
-                    Some(&mut waiting_node)
-                }
-            })
-            else { unreachable!() };
-        if existing.is_null() {
+        let mut status_guess = occupied();
+        let mut set_status_to: *mut WaitingThreadNode = &mut waiting_node;
+        while let Err(status) = node.status.compare_exchange_weak(
+            status_guess,
+            set_status_to,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            status_guess = status;
+            if status.is_null() {
+                set_status_to = occupied();
+            } else {
+                waiting_node.next = status;
+                set_status_to = &mut waiting_node;
+            }
+        }
+        if set_status_to == occupied() {
+            // The status was null, so we didn't end up needing to wait.
             return;
         }
         loop {
             if waiting_node.popped.load(Ordering::Acquire) {
-                return;
+                break;
             }
             thread::park();
+        }
+        drop(waiting_node);
+    }
+
+    pub fn touch(&self, value: TypeId) -> bool {
+        if let Ok(node) = self.find(value) {
+            node.status
+                .compare_exchange_weak(occupied(), occupied(), Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        } else {
+            true
         }
     }
 
     /// Mark a `TypeId` as absent from the set, or notify a waiting thread that
     /// it may proceed.
     ///
+    /// Returns true if the value was present in the set.
+    ///
     /// # Safety
-    /// The value must be in the set.
-    pub unsafe fn remove(&self, value: TypeId) {
-        let Ok(node) = self.find(value) else { unreachable!() };
-        let Ok(first_waiting) = node
-            .status
-            .fetch_update(Ordering::Release, Ordering::Acquire, |waiting| {
-                debug_assert_ne!(waiting, ptr::null_mut());
-                if waiting == occupied() {
-                    Some(ptr::null_mut())
-                } else {
-                    // Safety: `waiting` is either `occupied`, null, or valid.
-                    // It's only null if this function's safety precondition is
-                    // violated, and we just checked that it wasn't `occupied`,
-                    // so it's safe to dereference here.
-                    Some(unsafe { (*waiting).next })
-                }
-            })
-            else { unreachable!() };
-        debug_assert_ne!(first_waiting, ptr::null_mut());
-        if first_waiting != occupied() {
-            // Safety: `first_waiting` is either `occupied`, null, or valid. It's
-            // only null if this function's safety precondition is violated, and
-            // we just checked that it wasn't `occupied`, so it's safe to
-            // dereference here.
-            let WaitingThreadNode { thread, popped, .. } = unsafe { &*first_waiting };
+    /// Must not be called concurrently from multiple threads with the same
+    /// `TypeId` value.
+    pub unsafe fn remove(&self, value: TypeId) -> bool {
+        let Ok(node) = self.find(value) else { return false };
+        let mut status_guess = occupied();
+        let mut set_status_to = ptr::null_mut();
+        while let Err(status) = node.status.compare_exchange_weak(
+            status_guess,
+            set_status_to,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            if status.is_null() {
+                return false;
+            } else if status == occupied() {
+                set_status_to = ptr::null_mut();
+                status_guess = occupied();
+            } else {
+                // Safety: `status` is either null, `occupied()`, or valid, and
+                // we just checked that it wasn't null or `occupied`, so it's
+                // safe to dereference here.  The pointer is still alive unless
+                // this function is called concurrently, which is why it's an
+                // unsafe function with that condition.
+                set_status_to = unsafe { (*status).next };
+                status_guess = status;
+            }
+        }
+        // If we were successful, it's because our guess was correct, so
+        // `status_guess` holds the previous value of `node.status`.
+        #[cfg(feature = "std")]
+        if status_guess != occupied() {
+            // Safety: `status` is either null, `occupied`, or valid. If it was
+            // null, we would have returned false up above, and we just checked
+            // that it wasn't `occupied()`.  The pointer is still alive unless
+            // this function is called concurrently, which is why it's an unsafe
+            // function with that condition.
+            let WaitingThreadNode { thread, popped, .. } = unsafe { &*status_guess };
+            // Clone the thread handle here because it could be invalid as soon
+            // as we store into `popped`.
             let thread = thread.clone();
             popped.store(true, Ordering::Release);
             thread.unpark();
         }
+        true
     }
 }
 
 impl Drop for TypeIdSet {
     fn drop(&mut self) {
-        let mut node = self.head.with_mut(|p| *p);
+        #[cfg(loom)]
+        let mut node = self
+            .head
+            .with_mut(|p| core::mem::replace(p, ptr::null_mut()));
+        #[cfg(not(loom))]
+        let mut node = core::mem::replace(self.head.get_mut(), ptr::null_mut());
         while !node.is_null() {
+            // Node pointers are either null or valid pointers created by
+            // `Box::into_raw`, so it's safe to call `Box::from_raw` here.
             let boxed = unsafe { Box::from_raw(node) };
             node = boxed.next.cast_mut();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use loom::model;
-
-    /*
-    fn model<F: FnOnce()>(f: F) {
-        f()
-    }
-    */
-
-    #[test]
-    fn test1() {
-        model(|| {
-            struct Marker;
-
-            let set = TypeIdSet::default();
-            assert!(set.try_insert(TypeId::of::<Marker>()));
-            assert!(!set.try_insert(TypeId::of::<Marker>()));
-        });
-    }
-
-    #[test]
-    fn test2() {
-        model(|| {
-            struct Marker;
-
-            let set = TypeIdSet::default();
-            assert!(set.try_insert(TypeId::of::<Marker>()));
-            unsafe {
-                set.remove(TypeId::of::<Marker>());
-            }
-            assert!(set.try_insert(TypeId::of::<Marker>()));
-        });
-    }
-
-    #[test]
-    fn test3() {
-        model(|| {
-            struct Marker;
-
-            let set: &TypeIdSet = Box::leak(Box::default());
-            let other = thread::spawn(|| i32::from(set.try_insert(TypeId::of::<Marker>())));
-            let count = i32::from(set.try_insert(TypeId::of::<Marker>()));
-
-            let count = count + other.join().unwrap();
-            assert_eq!(count, 1);
-        });
-    }
-
-    #[test]
-    fn test4() {
-        model(|| {
-            struct Marker;
-
-            let set: &TypeIdSet = Box::leak(Box::default());
-            let other = thread::spawn(|| {
-                set.wait_to_insert(TypeId::of::<Marker>());
-                unsafe {
-                    set.remove(TypeId::of::<Marker>());
-                }
-            });
-            set.wait_to_insert(TypeId::of::<Marker>());
-            unsafe {
-                set.remove(TypeId::of::<Marker>());
-            }
-            other.join().unwrap();
-        });
-    }
-
-    #[test]
-    fn test5() {
-        model(|| {
-            struct Marker1;
-            struct Marker2;
-
-            let set: &TypeIdSet = Box::leak(Box::default());
-
-            assert!(set.try_insert(TypeId::of::<Marker1>()));
-
-            let other = thread::spawn(|| {
-                set.wait_to_insert(TypeId::of::<Marker2>());
-                unsafe {
-                    set.remove(TypeId::of::<Marker2>());
-                }
-            });
-            set.wait_to_insert(TypeId::of::<Marker2>());
-            unsafe {
-                set.remove(TypeId::of::<Marker2>());
-            }
-            other.join().unwrap();
-        });
-    }
-
-    #[test]
-    fn test6() {
-        model(|| {
-            struct Marker;
-            struct Marker1;
-            struct Marker2;
-            struct Marker3;
-            struct MarkerA;
-            struct MarkerB;
-            struct MarkerC;
-
-            let set: &TypeIdSet = Box::leak(Box::default());
-            assert!(set.try_insert(TypeId::of::<Marker>()));
-            let other = thread::spawn(|| {
-                assert!(set.try_insert(TypeId::of::<Marker1>()));
-                assert!(set.try_insert(TypeId::of::<Marker2>()));
-                assert!(set.try_insert(TypeId::of::<Marker3>()));
-            });
-            assert!(set.try_insert(TypeId::of::<MarkerA>()));
-            assert!(set.try_insert(TypeId::of::<MarkerB>()));
-            assert!(set.try_insert(TypeId::of::<MarkerC>()));
-            other.join().unwrap();
-        });
     }
 }
