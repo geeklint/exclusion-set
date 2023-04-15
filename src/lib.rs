@@ -232,7 +232,7 @@ impl TypeIdSet {
                 return false;
             } else if status == occupied() {
                 set_status_to = ptr::null_mut();
-                status_guess = occupied();
+                status_guess = status;
             } else {
                 // Safety: `status` is either null, `occupied()`, or valid, and
                 // we just checked that it wasn't null or `occupied`, so it's
