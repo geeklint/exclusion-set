@@ -54,6 +54,8 @@ use std::thread;
 /// A set of `TypeId`s held in a linked list.
 #[derive(Default)]
 pub struct TypeIdSet {
+    /// This pointer is either null (if the set has never been inserted to) or a
+    /// pointer to the first Node in the set.
     head: atomic::AtomicPtr<Node>,
 }
 
@@ -96,6 +98,15 @@ struct WaitingThreadNode {
 }
 
 impl TypeIdSet {
+    /// Create a new, empty, `TypeIdSet`.
+    #[cfg(not(loom))]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            head: atomic::AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+
     /// Search linearly through the list for a node with the given `TypeId`. If it
     /// was not found, return the value of the head pointer when we started
     /// searching (it is assured a node with that `TypeId` cannot be found by
