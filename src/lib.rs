@@ -5,10 +5,11 @@
 //! This source code can be used as a template for a similar data structure for
 //! any `Eq`-implementing type.
 //!
-//! This data structure uses atomic singly-linked lists in two places to enable
+//! This data structure uses atomic singly-linked lists in two forms to enable
 //! its operations.  One list has a node for every distinct `TypeId` that has
-//! ever been inserted.  The other list manages a queue of threads waiting for
-//! their turn to be considered as having "inserted" a value.
+//! ever been inserted.  The other type of list exists within each of those
+//! nodes, and manages a queue of threads waiting for their turn to be
+//! considered as having "inserted" the value stored in that node.
 //!
 //! An atomic singly-linked list is relatively straightforward to insert to:
 //! Allocate a new node, and then in loop, update the 'next' pointer of the node
@@ -18,19 +19,22 @@
 //! Things get more complicated as soon as you additionally consider removing
 //! items from the list.  Anything that dereferences a node pointer now runs the
 //! risk of attempting to dereference a value which has been removed between the
-//! load that returned the pointer and the dereference of the pointer.  This
-//! data structure avoids this issue in slightly different ways for the two
-//! different lists.  The main list of `TypeId` nodes avoids the issue by never
-//! removing nodes except in `Drop`.  The exclusive access guarenteed during a
-//! Drop implementation guarentees that no other thread could attempt to access
-//! the list while it is being freed.  The list of waiting threads instead
-//! avoids the issue by contracting that at most one thread at a time may
-//! dereference a pointer (including removing a node, which requires a
-//! dereference of the head pointer to retrive the value of `head.next`).  It
-//! exposes this contract as the safety requirement of the unsafe `remove`
-//! method.  This requirement is easy to fulfil for applications where a value
-//! is only removed from the set by a logical "owner" which knows that it
-//! previously inserted a value.
+//! load that returned the pointer and the dereference of the pointer.  Note
+//! that removal itself requires a dereference of the head pointer, to determine
+//! the value of `head.next`.  This data structure avoids this issue in slightly
+//! different ways for the two different types of list.
+//!
+//! The main list of `TypeId` nodes avoids the issue by never removing nodes
+//! except in `Drop`.  The exclusive access guarentee of Drop ensures that no
+//! other thread could attempt to access the list while it is being freed.
+//!
+//! The list of waiting threads instead avoids the issue by specifying, for each
+//! list of waiting threads, which in the context of this set, means for each
+//! unique `TypeId`, that at most one thread at a time may dereference a
+//! pointer.  It exposes this contract as the safety requirement of the unsafe
+//! `remove` method.  This requirement is easy to fulfil for applications where
+//! a value is only removed from the set by a logical "owner" which knows that
+//! it previously inserted a value.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(clippy::all, clippy::pedantic)]
@@ -314,7 +318,8 @@ impl Drop for TypeIdSet {
         let mut node = core::mem::replace(self.head.get_mut(), ptr::null_mut());
         while !node.is_null() {
             // Node pointers are either null or valid pointers created by
-            // `Box::into_raw`, so it's safe to call `Box::from_raw` here.
+            // `Box::into_raw`, and we just checked that it was not null, so
+            // it's safe to call `Box::from_raw` here.
             let boxed = unsafe { Box::from_raw(node) };
             node = boxed.next.cast_mut();
         }
