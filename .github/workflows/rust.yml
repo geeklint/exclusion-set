@@ -33,7 +33,7 @@ jobs:
         cargo +nightly miri setup
 
     - name: Instal cargo-llvm-cov
-      run: cargo install --git https://github.com/andrewgazelka/cargo-llvm-cov --branch codecov-improved-region cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
 
     - name: Clippy each feature set
       run: |
