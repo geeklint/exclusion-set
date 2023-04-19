@@ -3,7 +3,7 @@
 //! inserted into the set.
 //!
 //! This source code can be used as a template for a similar data structure for
-//! any `Eq`-implementing type.
+//! any type which implements `Eq`.
 //!
 //! This data structure uses atomic singly-linked lists in two forms to enable
 //! its operations.  One list has a node for every distinct `TypeId` that has
