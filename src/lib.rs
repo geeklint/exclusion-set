@@ -8,8 +8,8 @@
 //! This data structure uses atomic singly-linked lists in two forms to enable
 //! its operations.  One list has a node for every distinct `TypeId` that has
 //! ever been inserted.  The other type of list exists within each of those
-//! nodes, and manages a queue of threads waiting for their turn to be
-//! considered as having "inserted" the value stored in that node.
+//! nodes, and manages a queue of threads waiting in the `wait_to_insert` method
+//! for another thread to call `remove`.
 //!
 //! An atomic singly-linked list is relatively straightforward to insert to:
 //! Allocate a new node, and then in loop, update the 'next' pointer of the node
@@ -216,8 +216,10 @@ impl TypeIdSet {
             })
     }
 
-    /// Block the current thread until we can consider ourselves to have
-    /// inserted the `TypeId` provided.
+    /// If the `TypeId` provided is not in the set, insert it.  Otherwise, block
+    /// the current thread until another thread calls `remove` for the given
+    /// `TypeId` (if multiple threads are waiting, only one of them will
+    /// return).
     #[cfg(feature = "std")]
     pub fn wait_to_insert(&self, value: TypeId) {
         let Err(node) = self.try_insert_inner(value) else { return };
