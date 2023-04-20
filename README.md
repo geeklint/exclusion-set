@@ -5,4 +5,5 @@ A lock-free concurrent set that stores `TypeId`s.
 
 Tested with [loom](https://github.com/tokio-rs/loom).
 
-This source code can be used as a template for a similar data structure for any `Eq`-implementing type.
+This source code can be used as a template for a similar data structure for any
+type which implements `Eq`.
