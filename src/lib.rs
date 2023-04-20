@@ -211,7 +211,7 @@ impl TypeIdSet {
             .or_else(|_| {
                 // Safety: in the error case, we have not stored the box anywhere else
                 // so we can free it here
-                let _ = unsafe { Box::from_raw(new_node) };
+                let _: Box<Node> = unsafe { Box::from_raw(new_node) };
                 found_and_set
             })
     }
