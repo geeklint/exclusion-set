@@ -61,6 +61,11 @@ pub struct TypeIdSet {
     /// This pointer is either null (if the set has never been inserted to) or a
     /// pointer to the first Node in the set.
     head: atomic::AtomicPtr<Node>,
+    /// This pointer is either null (if the set has never been inserted to) or a
+    /// pointer to one of the nodes in the set.  This enables an optimization
+    /// where the last removed item can be cheaper to re-insert by skipping
+    /// navigating the whole linked-list.
+    last_removed: atomic::AtomicPtr<Node>,
 }
 
 struct Node {
@@ -108,6 +113,7 @@ impl TypeIdSet {
     pub const fn new() -> Self {
         Self {
             head: atomic::AtomicPtr::new(ptr::null_mut()),
+            last_removed: atomic::AtomicPtr::new(ptr::null_mut()),
         }
     }
 
@@ -116,12 +122,25 @@ impl TypeIdSet {
     /// searching (it is assured a node with that `TypeId` cannot be found by
     /// traversing from that pointer onward).
     fn find(&self, value: TypeId) -> Result<&Node, *const Node> {
-        let original_head = self.head.load(Ordering::Acquire).cast_const();
-        let mut current_node = original_head;
-        // Safety: current_node is loaded from self.head or node.next, both of
+        let starting_node = self.last_removed.load(Ordering::Acquire).cast_const();
+        let mut current_node = starting_node;
+        // Safety: current_node is loaded from self.last_dropped or node.next, both of
         // which only ever store null or valid pointers created by
         // Box::into_raw, so it's safe to call .as_ref on it here
         while let Some(node) = unsafe { current_node.as_ref() } {
+            if node.value == value {
+                return Ok(node);
+            }
+            current_node = node.next;
+        }
+        let original_head = self.head.load(Ordering::Acquire).cast_const();
+        let mut current_node = original_head;
+        while current_node != starting_node {
+            // Safety: current_node is loaded from self.head or node.next, both of
+            // which only ever store null or valid pointers created by
+            // Box::into_raw, and it won't be null since it must not be the end of
+            // the chain if it wasn't equal to starting_node
+            let node = unsafe { &*current_node };
             if node.value == value {
                 return Ok(node);
             }
@@ -290,6 +309,8 @@ impl TypeIdSet {
                 status_guess = status;
             }
         }
+        self.last_removed
+            .store(<*const _>::cast_mut(node), Ordering::Release);
         // If we were successful, it's because our guess was correct, so
         // `status_guess` holds the previous value of `node.status`.
         #[cfg(feature = "std")]

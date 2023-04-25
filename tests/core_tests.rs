@@ -97,3 +97,25 @@ fn removing_something_absent_is_false() {
         }
     });
 }
+
+#[test]
+fn reinsert_in_reverse() {
+    model(|| {
+        struct Tail;
+        struct Middle;
+        struct Head;
+
+        let set = TypeIdSet::default();
+        assert!(set.try_insert(TypeId::of::<Tail>()));
+        assert!(set.try_insert(TypeId::of::<Middle>()));
+        assert!(set.try_insert(TypeId::of::<Head>()));
+        unsafe {
+            assert!(set.remove(TypeId::of::<Tail>()));
+            assert!(set.remove(TypeId::of::<Middle>()));
+            assert!(set.remove(TypeId::of::<Head>()));
+        }
+        assert!(set.try_insert(TypeId::of::<Head>()));
+        assert!(set.try_insert(TypeId::of::<Middle>()));
+        assert!(set.try_insert(TypeId::of::<Tail>()));
+    });
+}
