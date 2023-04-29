@@ -94,6 +94,7 @@ fn removing_something_absent_is_false() {
         unsafe {
             assert!(!set.remove(TypeId::of::<Absent>()));
             assert!(set.remove(TypeId::of::<Present>()));
+            assert!(!set.remove(TypeId::of::<Present>()));
         }
     });
 }
