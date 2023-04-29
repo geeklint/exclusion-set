@@ -29,12 +29,12 @@ fn two_threads_wait() {
         let other = thread::spawn(move || {
             set2.wait_to_insert(TypeId::of::<Marker>());
             unsafe {
-                set2.remove(TypeId::of::<Marker>());
+                assert!(set2.remove(TypeId::of::<Marker>()));
             }
         });
         set.wait_to_insert(TypeId::of::<Marker>());
         unsafe {
-            set.remove(TypeId::of::<Marker>());
+            assert!(set.remove(TypeId::of::<Marker>()));
         }
         other.join().unwrap();
     });
@@ -52,18 +52,18 @@ fn three_threads_wait() {
         let thread1 = thread::spawn(move || {
             set1.wait_to_insert(TypeId::of::<Marker>());
             unsafe {
-                set1.remove(TypeId::of::<Marker>());
+                assert!(set1.remove(TypeId::of::<Marker>()));
             }
         });
         let thread2 = thread::spawn(move || {
             set2.wait_to_insert(TypeId::of::<Marker>());
             unsafe {
-                set2.remove(TypeId::of::<Marker>());
+                assert!(set2.remove(TypeId::of::<Marker>()));
             }
         });
         set0.wait_to_insert(TypeId::of::<Marker>());
         unsafe {
-            set0.remove(TypeId::of::<Marker>());
+            assert!(set0.remove(TypeId::of::<Marker>()));
         }
         thread1.join().unwrap();
         thread2.join().unwrap();
@@ -73,7 +73,6 @@ fn three_threads_wait() {
 #[test]
 fn two_threads_wait_after_an_insert() {
     model(|| {
-        eprintln!("== new model ==");
         struct Marker1;
         struct Marker2;
 
@@ -83,18 +82,49 @@ fn two_threads_wait_after_an_insert() {
 
         let other = thread::spawn(move || {
             set2.wait_to_insert(TypeId::of::<Marker2>());
-            dbg!();
             unsafe {
-                set2.remove(TypeId::of::<Marker2>());
+                assert!(set2.remove(TypeId::of::<Marker2>()));
             }
-            dbg!();
         });
         set.wait_to_insert(TypeId::of::<Marker2>());
-        dbg!();
         unsafe {
-            set.remove(TypeId::of::<Marker2>());
+            assert!(set.remove(TypeId::of::<Marker2>()));
         }
-        dbg!();
+        other.join().unwrap();
+    });
+}
+
+#[test]
+#[ignore = "very slow"]
+fn alternating_waits() {
+    model(|| {
+        struct Marker;
+
+        let typeid_value = TypeId::of::<Marker>();
+        let set: Arc<TypeIdSet> = Arc::default();
+        assert!(set.try_insert(TypeId::of::<Marker>()));
+        let set2 = Arc::clone(&set);
+        let other = thread::spawn(move || {
+            set2.wait_to_insert(typeid_value);
+            unsafe {
+                assert!(set2.remove(typeid_value));
+            }
+            set2.wait_to_insert(typeid_value);
+            unsafe {
+                assert!(set2.remove(typeid_value));
+            }
+        });
+        unsafe {
+            assert!(set.remove(typeid_value));
+        }
+        set.wait_to_insert(typeid_value);
+        unsafe {
+            assert!(set.remove(typeid_value));
+        }
+        set.wait_to_insert(typeid_value);
+        unsafe {
+            assert!(set.remove(typeid_value));
+        }
         other.join().unwrap();
     });
 }

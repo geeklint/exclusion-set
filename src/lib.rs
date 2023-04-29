@@ -245,7 +245,7 @@ impl TypeIdSet {
         let mut waiting_node = WaitingThreadNode {
             thread: thread::current(),
             popped: atomic::AtomicBool::new(false),
-            next: ptr::null_mut(),
+            next: occupied(),
         };
         let mut status_guess = occupied();
         let mut set_status_to: *mut WaitingThreadNode = &mut waiting_node;

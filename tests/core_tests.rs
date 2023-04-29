@@ -36,7 +36,7 @@ fn can_insert_after_remove() {
         let set = TypeIdSet::default();
         assert!(set.try_insert(TypeId::of::<Marker>()));
         unsafe {
-            set.remove(TypeId::of::<Marker>());
+            assert!(set.remove(TypeId::of::<Marker>()));
         }
         assert!(set.try_insert(TypeId::of::<Marker>()));
     });
