@@ -35,6 +35,46 @@
 //! `remove` method.  This requirement is easy to fulfil for applications where
 //! a value is only removed from the set by a logical "owner" which knows that
 //! it previously inserted a value.
+//!
+//! # Example
+//!
+//! The following code inserts some values into the set, then removes one of
+//! them, and then spawns a second thread that waits to insert into the set.
+//!
+#![cfg_attr(
+    feature = "std",
+    doc = "
+```
+# use std::{sync::Arc, any::TypeId};
+# use typeid_set::TypeIdSet;
+# unsafe {
+struct A;
+struct B;
+struct C;
+
+let set: Arc<TypeIdSet> = Arc::default();
+set.try_insert(TypeId::of::<C>());
+set.try_insert(TypeId::of::<B>());
+set.try_insert(TypeId::of::<A>());
+set.remove(TypeId::of::<A>());
+let set2 = set.clone();
+# let handle =
+std::thread::spawn(move || {
+    set2.wait_to_insert(TypeId::of::<B>());
+});
+# set.remove(TypeId::of::<B>()); // avoid a deadlock in the example
+# handle.join();
+# }
+```
+"
+)]
+//!
+//! After this code has been run, we can expect the data structure to look like
+//! this:
+//!
+//! <div style="background-color: white">
+#![doc=include_str!("lib-example.svg")]
+//! </div>
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(clippy::all, clippy::pedantic)]
