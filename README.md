@@ -1,5 +1,5 @@
-[![Tests](https://github.com/geeklint/typeid-set/actions/workflows/rust.yml/badge.svg)](https://github.com/geeklint/typeid-set/actions/workflows/rust.yml)
-[![codecov](https://codecov.io/gh/geeklint/typeid-set/branch/main/graph/badge.svg?token=8HZZXB7MUL)](https://codecov.io/gh/geeklint/typeid-set)
+[![Tests](https://github.com/geeklint/exclusion-set/actions/workflows/rust.yml/badge.svg)](https://github.com/geeklint/exclusion-set/actions/workflows/rust.yml)
+[![codecov](https://codecov.io/gh/geeklint/exclusion-set/branch/main/graph/badge.svg?token=8HZZXB7MUL)](https://codecov.io/gh/geeklint/exclusion-set)
 
 A lock-free concurrent set.
 
