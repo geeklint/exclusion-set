@@ -297,6 +297,7 @@ impl<T> Set<T> {
     /// value (if multiple threads are waiting, only one of them will
     /// return).
     #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn wait_to_insert(&self, value: T)
     where
         T: Eq,
