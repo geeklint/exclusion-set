@@ -1,12 +1,12 @@
-//! A lock-free concurrent set that stores `TypeId`s.  The operations on this
-//! set are O(n) where n is the number of distinct `TypeId`s that have ever been
-//! inserted into the set.
+//! A lock-free concurrent set.  The operations on this set are O(n) where n is
+//! the number of distinct values that have ever been inserted into the set.
 //!
-//! This source code can be used as a template for a similar data structure for
-//! any type which implements `Eq`.
+//! The intended use-case is to provide a way to ensure exclusivity over
+//! critical sections of code on a per-value basis, where the number of distinct
+//! values is small but dynamic.
 //!
 //! This data structure uses atomic singly-linked lists in two forms to enable
-//! its operations.  One list has a node for every distinct `TypeId` that has
+//! its operations.  One list has a node for every distinct value that has
 //! ever been inserted.  The other type of list exists within each of those
 //! nodes, and manages a queue of threads waiting in the `wait_to_insert` method
 //! for another thread to call `remove`.
@@ -24,17 +24,17 @@
 //! the value of `head.next`.  This data structure avoids this issue in slightly
 //! different ways for the two different types of list.
 //!
-//! The main list of `TypeId` nodes avoids the issue by never removing nodes
-//! except in `Drop`.  The exclusive access guarentee of Drop ensures that no
-//! other thread could attempt to access the list while it is being freed.
+//! The main list of nodes for each value avoids the issue by never removing
+//! nodes except in `Drop`.  The exclusive access guarentee of Drop ensures that
+//! no other thread could attempt to access the list while it is being freed.
 //!
 //! The list of waiting threads instead avoids the issue by specifying, for each
 //! list of waiting threads, which in the context of this set, means for each
-//! unique `TypeId`, that at most one thread at a time may dereference a
-//! pointer.  It exposes this contract as the safety requirement of the unsafe
-//! `remove` method.  This requirement is easy to fulfil for applications where
-//! a value is only removed from the set by a logical "owner" which knows that
-//! it previously inserted a value.
+//! unique value, that at most one thread at a time may dereference a pointer.
+//! It exposes this contract as the safety requirement of the unsafe `remove`
+//! method.  This requirement is easy to fulfil for applications where a value
+//! is only removed from the set by a logical "owner" which knows that it
+//! previously inserted a value.
 //!
 //! # Example
 //!
@@ -45,24 +45,20 @@
     feature = "std",
     doc = "
 ```
-# use std::{sync::Arc, any::TypeId};
-# use typeid_set::TypeIdSet;
+# use std::sync::Arc;
+# use typeid_set::Set;
 # unsafe {
-struct A;
-struct B;
-struct C;
-
-let set: Arc<TypeIdSet> = Arc::default();
-set.try_insert(TypeId::of::<C>());
-set.try_insert(TypeId::of::<B>());
-set.try_insert(TypeId::of::<A>());
-set.remove(TypeId::of::<A>());
+let set: Arc<Set> = Arc::default();
+set.try_insert(1);
+set.try_insert(2);
+set.try_insert(3);
+set.remove(1);
 let set2 = set.clone();
 # let handle =
 std::thread::spawn(move || {
-    set2.wait_to_insert(TypeId::of::<B>());
+    set2.wait_to_insert(2);
 });
-# set.remove(TypeId::of::<B>()); // avoid a deadlock in the example
+# set.remove(2); // avoid a deadlock in the example
 # handle.join();
 # }
 ```
@@ -83,7 +79,7 @@ extern crate alloc;
 
 use {
     alloc::boxed::Box,
-    core::{any::TypeId, ptr, sync::atomic::Ordering},
+    core::{ptr, sync::atomic::Ordering},
 };
 
 #[cfg(loom)]
@@ -95,34 +91,33 @@ use core::sync::atomic;
 #[cfg(all(not(loom), feature = "std"))]
 use std::thread;
 
-/// A set of `TypeId`s held in a linked list.
-#[derive(Default)]
-pub struct TypeIdSet {
+/// A set of values held in a linked list.
+pub struct Set<T> {
     /// This pointer is either null (if the set has never been inserted to) or a
     /// pointer to the first Node in the set.
-    head: atomic::AtomicPtr<Node>,
+    head: atomic::AtomicPtr<Node<T>>,
     /// This pointer is either null (if the set has never been inserted to) or a
     /// pointer to one of the nodes in the set.  This enables an optimization
     /// where the last removed item can be cheaper to re-insert by skipping
     /// navigating the whole linked-list.
-    last_removed: atomic::AtomicPtr<Node>,
+    last_removed: atomic::AtomicPtr<Node<T>>,
 }
 
-struct Node {
-    /// The TypeId this node was created for.
-    value: TypeId,
+struct Node<T> {
+    /// The value this node was created for.
+    value: T,
 
-    /// The current status of the associated `TypeId`; null if the `TypeId` is
-    /// currently considered absent, `occupied` if the `TypeId` is currently
-    /// considered present, or a valid pointer if the `TypeId` is currently
+    /// The current status of the associated value; null if the value is
+    /// currently considered absent, `occupied` if the value is currently
+    /// considered present, or a valid pointer if the value is currently
     /// considered present and one or more threads are waiting to insert it.
     status: atomic::AtomicPtr<WaitingThreadNode>,
 
     /// The next node, or `null` if this is the end of the list.
-    next: *const Node,
+    next: *const Node<T>,
 }
 
-/// This otherwise invalid pointer is used as a marker value that a `TypeId` is
+/// This otherwise invalid pointer is used as a marker value that a value is
 /// currently considered "in" the set.
 fn occupied() -> *mut WaitingThreadNode {
     static RESERVED_MEMORY: usize = usize::from_ne_bytes([0xA5; core::mem::size_of::<usize>()]);
@@ -130,8 +125,8 @@ fn occupied() -> *mut WaitingThreadNode {
 }
 
 /// This type is used for a stack-based linked list of waiting threads, so that
-/// when a `TypeId` is removed from the set, a thread which is waiting to insert
-/// that `TypeId` can be notified that it may proceed.
+/// when a value is removed from the set, a thread which is waiting to insert
+/// that value can be notified that it may proceed.
 struct WaitingThreadNode {
     /// The handle of the waiting thread.
     #[cfg(feature = "std")]
@@ -146,8 +141,17 @@ struct WaitingThreadNode {
     next: *mut WaitingThreadNode,
 }
 
-impl TypeIdSet {
-    /// Create a new, empty, `TypeIdSet`.
+impl<T> Default for Set<T> {
+    fn default() -> Self {
+        Self {
+            head: atomic::AtomicPtr::new(ptr::null_mut()),
+            last_removed: atomic::AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+}
+
+impl<T> Set<T> {
+    /// Create a new, empty, `Set`.
     #[cfg(not(loom))]
     #[must_use]
     pub const fn new() -> Self {
@@ -157,18 +161,21 @@ impl TypeIdSet {
         }
     }
 
-    /// Search linearly through the list for a node with the given `TypeId`. If it
+    /// Search linearly through the list for a node with the given value. If it
     /// was not found, return the value of the head pointer when we started
-    /// searching (it is assured a node with that `TypeId` cannot be found by
+    /// searching (it is assured a node with that value cannot be found by
     /// traversing from that pointer onward).
-    fn find(&self, value: TypeId) -> Result<&Node, *const Node> {
+    fn find(&self, value: &T) -> Result<&Node<T>, *const Node<T>>
+    where
+        T: Eq,
+    {
         let starting_node = self.last_removed.load(Ordering::Acquire).cast_const();
         let mut current_node = starting_node;
         // Safety: current_node is loaded from self.last_dropped or node.next, both of
         // which only ever store null or valid pointers created by
         // Box::into_raw, so it's safe to call .as_ref on it here
         while let Some(node) = unsafe { current_node.as_ref() } {
-            if node.value == value {
+            if node.value == *value {
                 return Ok(node);
             }
             current_node = node.next;
@@ -181,7 +188,7 @@ impl TypeIdSet {
             // Box::into_raw, and it won't be null since it must not be the end of
             // the chain if it wasn't equal to starting_node
             let node = unsafe { &*current_node };
-            if node.value == value {
+            if node.value == *value {
                 return Ok(node);
             }
             current_node = node.next;
@@ -189,18 +196,24 @@ impl TypeIdSet {
         Err(original_head)
     }
 
-    /// Try to insert a `TypeId` into the set.  Returns `true` if the `TypeId` was
-    /// inserted or `false` if the `TypeId` was already considered present.
+    /// Try to insert a value into the set.  Returns `true` if the value was
+    /// inserted or `false` if the value was already considered present.
     #[must_use]
-    pub fn try_insert(&self, value: TypeId) -> bool {
+    pub fn try_insert(&self, value: T) -> bool
+    where
+        T: Eq,
+    {
         self.try_insert_inner(value).is_ok()
     }
 
-    /// Try to insert a `TypeId` into the set.  Returns Ok if the `TypeId` was
-    /// inserted, or the occupied node if the `TypeId` was already considered
+    /// Try to insert a value into the set.  Returns Ok if the value was
+    /// inserted, or the occupied node if the value was already considered
     /// present.
-    fn try_insert_inner(&self, value: TypeId) -> Result<(), &Node> {
-        let next = match self.find(value) {
+    fn try_insert_inner(&self, value: T) -> Result<(), &Node<T>>
+    where
+        T: Eq,
+    {
+        let next = match self.find(&value) {
             Ok(node) => {
                 // The failure Ordering can be Relaxed here, because we don't
                 // try to read any data associated with the value, we just care
@@ -270,17 +283,20 @@ impl TypeIdSet {
             .or_else(|_| {
                 // Safety: in the error case, we have not stored the box anywhere else
                 // so we can free it here
-                let _: Box<Node> = unsafe { Box::from_raw(new_node) };
+                let _: Box<Node<T>> = unsafe { Box::from_raw(new_node) };
                 found_and_set
             })
     }
 
-    /// If the `TypeId` provided is not in the set, insert it.  Otherwise, block
+    /// If the value provided is not in the set, insert it.  Otherwise, block
     /// the current thread until another thread calls `remove` for the given
-    /// `TypeId` (if multiple threads are waiting, only one of them will
+    /// value (if multiple threads are waiting, only one of them will
     /// return).
     #[cfg(feature = "std")]
-    pub fn wait_to_insert(&self, value: TypeId) {
+    pub fn wait_to_insert(&self, value: T)
+    where
+        T: Eq,
+    {
         let Err(node) = self.try_insert_inner(value) else { return };
         let mut waiting_node = WaitingThreadNode {
             thread: thread::current(),
@@ -316,15 +332,18 @@ impl TypeIdSet {
         drop(waiting_node);
     }
 
-    /// Mark a `TypeId` as absent from the set, or notify a waiting thread that
+    /// Mark a value as absent from the set, or notify a waiting thread that
     /// it may proceed.
     ///
     /// Returns true if the value was present in the set.
     ///
     /// # Safety
     /// Must not be called concurrently from multiple threads with the same
-    /// `TypeId` value.
-    pub unsafe fn remove(&self, value: TypeId) -> bool {
+    /// value.
+    pub unsafe fn remove(&self, value: &T) -> bool
+    where
+        T: Eq,
+    {
         let Ok(node) = self.find(value) else { return false };
         let mut status_guess = occupied();
         let mut set_status_to = ptr::null_mut();
@@ -371,7 +390,7 @@ impl TypeIdSet {
     }
 }
 
-impl Drop for TypeIdSet {
+impl<T> Drop for Set<T> {
     fn drop(&mut self) {
         #[cfg(loom)]
         let mut node = self

@@ -1,4 +1,4 @@
-use typeid_set::TypeIdSet;
+use typeid_set::Set;
 
 extern crate std;
 
@@ -22,7 +22,7 @@ fn can_only_insert_once() {
     model(|| {
         struct Marker;
 
-        let set = TypeIdSet::default();
+        let set = Set::default();
         assert!(set.try_insert(TypeId::of::<Marker>()));
         assert!(!set.try_insert(TypeId::of::<Marker>()));
     });
@@ -33,10 +33,10 @@ fn can_insert_after_remove() {
     model(|| {
         struct Marker;
 
-        let set = TypeIdSet::default();
+        let set = Set::default();
         assert!(set.try_insert(TypeId::of::<Marker>()));
         unsafe {
-            assert!(set.remove(TypeId::of::<Marker>()));
+            assert!(set.remove(&TypeId::of::<Marker>()));
         }
         assert!(set.try_insert(TypeId::of::<Marker>()));
     });
@@ -47,7 +47,7 @@ fn only_one_thread_can_insert() {
     model(|| {
         struct Marker;
 
-        let set: Arc<TypeIdSet> = Arc::default();
+        let set: Arc<Set<TypeId>> = Arc::default();
         let set2 = Arc::clone(&set);
         let other = thread::spawn(move || i32::from(set2.try_insert(TypeId::of::<Marker>())));
         let count = i32::from(set.try_insert(TypeId::of::<Marker>()));
@@ -68,7 +68,7 @@ fn many_inserts() {
         struct MarkerB;
         struct MarkerC;
 
-        let set: Arc<TypeIdSet> = Arc::default();
+        let set: Arc<Set<TypeId>> = Arc::default();
         assert!(set.try_insert(TypeId::of::<Marker>()));
         let set2 = Arc::clone(&set);
         let other = thread::spawn(move || {
@@ -89,12 +89,12 @@ fn removing_something_absent_is_false() {
         struct Present;
         struct Absent;
 
-        let set = TypeIdSet::default();
+        let set = Set::default();
         assert!(set.try_insert(TypeId::of::<Present>()));
         unsafe {
-            assert!(!set.remove(TypeId::of::<Absent>()));
-            assert!(set.remove(TypeId::of::<Present>()));
-            assert!(!set.remove(TypeId::of::<Present>()));
+            assert!(!set.remove(&TypeId::of::<Absent>()));
+            assert!(set.remove(&TypeId::of::<Present>()));
+            assert!(!set.remove(&TypeId::of::<Present>()));
         }
     });
 }
@@ -106,14 +106,14 @@ fn reinsert_in_reverse() {
         struct Middle;
         struct Head;
 
-        let set = TypeIdSet::default();
+        let set = Set::default();
         assert!(set.try_insert(TypeId::of::<Tail>()));
         assert!(set.try_insert(TypeId::of::<Middle>()));
         assert!(set.try_insert(TypeId::of::<Head>()));
         unsafe {
-            assert!(set.remove(TypeId::of::<Tail>()));
-            assert!(set.remove(TypeId::of::<Middle>()));
-            assert!(set.remove(TypeId::of::<Head>()));
+            assert!(set.remove(&TypeId::of::<Tail>()));
+            assert!(set.remove(&TypeId::of::<Middle>()));
+            assert!(set.remove(&TypeId::of::<Head>()));
         }
         assert!(set.try_insert(TypeId::of::<Head>()));
         assert!(set.try_insert(TypeId::of::<Middle>()));
