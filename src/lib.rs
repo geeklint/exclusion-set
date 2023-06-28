@@ -45,20 +45,24 @@
     feature = "std",
     doc = "
 ```
-# use std::sync::Arc;
+# use std::{any::TypeId, sync::Arc};
 # use typeid_set::Set;
 # unsafe {
-let set: Arc<Set<i32>> = Arc::default();
-set.try_insert(1);
-set.try_insert(2);
-set.try_insert(3);
-set.remove(&1);
+struct A;
+struct B;
+struct C;
+
+let set: Arc<Set<TypeId>> = Arc::default();
+set.try_insert(TypeId::of::<A>());
+set.try_insert(TypeId::of::<B>());
+set.try_insert(TypeId::of::<C>());
+set.remove(&TypeId::of::<A>());
 let set2 = set.clone();
 # let handle =
 std::thread::spawn(move || {
-    set2.wait_to_insert(2);
+    set2.wait_to_insert(TypeId::of::<B>());
 });
-# set.remove(&2); // avoid a deadlock in the example
+# set.remove(&TypeId::of::<B>()); // avoid a deadlock in the example
 # handle.join();
 # }
 ```
