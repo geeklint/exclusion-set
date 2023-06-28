@@ -48,7 +48,7 @@
 # use std::sync::Arc;
 # use typeid_set::Set;
 # unsafe {
-let set: Arc<Set> = Arc::default();
+let set: Arc<Set<i32>> = Arc::default();
 set.try_insert(1);
 set.try_insert(2);
 set.try_insert(3);
