@@ -46,7 +46,7 @@
     doc = "
 ```
 # use std::{any::TypeId, sync::Arc};
-# use typeid_set::Set;
+# use exclusion_set::Set;
 # unsafe {
 struct A;
 struct B;
