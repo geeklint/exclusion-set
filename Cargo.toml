@@ -2,7 +2,7 @@
 name = "exclusion-set"
 version = "0.1.0"
 edition = "2021"
-license = "CC0"
+license = "CC0-1.0"
 description = "a lock-free concurrent set"
 homepage = "https://github.com/geeklint/exclusion-set"
 repository = "https://github.com/geeklint/exclusion-set"
