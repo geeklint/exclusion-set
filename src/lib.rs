@@ -52,13 +52,13 @@ let set: Arc<Set<i32>> = Arc::default();
 set.try_insert(1);
 set.try_insert(2);
 set.try_insert(3);
-set.remove(1);
+set.remove(&1);
 let set2 = set.clone();
 # let handle =
 std::thread::spawn(move || {
     set2.wait_to_insert(2);
 });
-# set.remove(2); // avoid a deadlock in the example
+# set.remove(&2); // avoid a deadlock in the example
 # handle.join();
 # }
 ```
